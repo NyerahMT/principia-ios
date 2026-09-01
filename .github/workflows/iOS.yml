@@ -33,7 +33,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUNDLE_ID: com.nyerahmt.principia.ios
+  BUNDLE_ID: se.principia-web.principia
   MARKETING_VERSION: 0.0.1
   IOS_DEPLOYMENT_TARGET: '15.0'
 

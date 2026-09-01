@@ -110,6 +110,10 @@ tms_varray_bind_attributes(struct tms_varray *va,
 
             if (last != m->gbuf) {
                 //tms_gbuffer_bind(va->mappings[x].gbuf, GL_ARRAY_BUFFER);
+#ifdef SDL_PLATFORM_IOS
+                if (_tms.ios_reload_buffers && bufdata->gbuf && bufdata->gbuf->buf)
+                    tms_gbuffer_upload(bufdata->gbuf);
+#endif
                 glBindBuffer(GL_ARRAY_BUFFER, bufdata->gbuf->vbo);
                 last = m->gbuf;
             }
@@ -125,8 +129,17 @@ tms_varray_bind_attributes(struct tms_varray *va,
                 glVertexAttribPointer(locations[x], m->num_components, m->component_type,
                                       0, bufdata->vsize, (void*)(uintptr_t)m->offset);
 
+#ifdef SDL_PLATFORM_IOS
+            /*
+             * UIKit may not preserve vertex attribute enable state
+             * across application suspension. Always re-enable every
+             * active attribute on iOS rather than relying on last_amax.
+             */
+            glEnableVertexAttribArray(locations[x]);
+#else
             if (locations[x] > last_amax || last_amax == 0)
                 glEnableVertexAttribArray(locations[x]);
+#endif
 
             if (locations[x] > ma) ma = locations[x];
         }
@@ -166,4 +179,3 @@ tms_varray_upload_all(struct tms_varray *va)
     for (int x=0; x<va->num_gbufs; x++)
         tms_gbuffer_upload(va->gbufs[x].gbuf);
 }
-

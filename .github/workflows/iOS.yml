@@ -1,0 +1,264 @@
+name: iOS
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'data/**'
+      - 'packaging/**'
+      - 'cmake/**'
+      - 'scripts/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/iOS.yml'
+
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'data/**'
+      - 'packaging/**'
+      - 'cmake/**'
+      - 'scripts/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/iOS.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: principia-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUNDLE_ID: com.nyerahmt.principia.ios
+  MARKETING_VERSION: 0.0.1
+  IOS_DEPLOYMENT_TARGET: '15.0'
+
+jobs:
+  ios:
+    name: iOS Device
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout Principia
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify iOS log path
+        run: |
+          set -euo pipefail
+          grep -Fq 'SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS)' src/tms/backend/main.cc
+
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.31.8'
+
+      - name: Prepare output directories
+        run: |
+          mkdir -p ios-logs
+          mkdir -p ios-output
+
+      - name: Show toolchain
+        run: |
+          set -o pipefail
+          {
+            sw_vers
+            echo
+            xcodebuild -version
+            echo
+            xcrun --sdk iphoneos --show-sdk-version
+            echo
+            xcrun --sdk iphoneos --show-sdk-path
+            echo
+            cmake --version
+          } 2>&1 | tee ios-logs/environment.log
+
+      - name: Install Ninja
+        run: |
+          set -euo pipefail
+          if ! command -v ninja >/dev/null 2>&1; then
+            brew install ninja
+          fi
+          ninja --version
+
+      - name: Determine dependency cache key
+        id: deps
+        run: |
+          set -euo pipefail
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          XCODE_VERSION="$(xcodebuild -version | tr '\n' '-')"
+          echo "sdk=$SDK_VERSION" >> "$GITHUB_OUTPUT"
+          echo "xcode=$XCODE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: principia-ios-${{ runner.os }}-${{ runner.arch }}-${{ steps.deps.outputs.sdk }}
+          max-size: 1G
+
+      - name: Restore iOS dependencies
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: build-ios-deps
+          key: principia-ios-device-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.deps.outputs.sdk }}-${{ hashFiles('scripts/build-ios-deps.sh') }}
+
+      - name: Build iOS dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -o pipefail
+          chmod +x scripts/build-ios-deps.sh
+          IOS_SDK=iphoneos IOS_ARCH=arm64 IOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
+            ./scripts/build-ios-deps.sh 2>&1 | tee ios-logs/dependencies.log
+
+      - name: Report dependency cache hit
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: echo "Using cached iOS device dependencies." | tee ios-logs/dependencies.log
+
+      - name: Configure Principia
+        run: |
+          set -o pipefail
+          cmake -S . -B build-ios -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_PREFIX_PATH="$PWD/build-ios-deps" \
+            -DFREETYPE_LIBRARY="$PWD/build-ios-deps/lib/libfreetype.a" \
+            -DFREETYPE_INCLUDE_DIRS="$PWD/build-ios-deps/include/freetype2" \
+            -DFREETYPE_INCLUDE_DIR_ft2build="$PWD/build-ios-deps/include/freetype2" \
+            -DFREETYPE_INCLUDE_DIR_freetype2="$PWD/build-ios-deps/include/freetype2" \
+            -DJPEG_LIBRARY="$PWD/build-ios-deps/lib/libjpeg.a" \
+            -DJPEG_INCLUDE_DIR="$PWD/build-ios-deps/include" \
+            -DPNG_LIBRARY="$PWD/build-ios-deps/lib/libpng16.a" \
+            -DPNG_PNG_INCLUDE_DIR="$PWD/build-ios-deps/include" \
+            -DZLIB_LIBRARY="$PWD/build-ios-deps/lib/libz.a" \
+            -DZLIB_INCLUDE_DIR="$PWD/build-ios-deps/include" \
+            -DCURL_LIBRARY="$PWD/build-ios-deps/lib/libcurl.a" \
+            -DCURL_INCLUDE_DIR="$PWD/build-ios-deps/include" \
+            -DUSE_VENDORED_SDL3=ON \
+            -DUNITY_BUILD=OFF \
+            2>&1 | tee ios-logs/configure.log
+
+      - name: Build Principia
+        run: |
+          set -o pipefail
+          cmake --build build-ios --parallel "$(sysctl -n hw.ncpu)" \
+            2>&1 | tee ios-logs/build.log
+          ccache -s | tee -a ios-logs/build.log
+
+      - name: Verify app bundle
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-ios/principia.app"
+          test -d "$APP"
+          test -f "$APP/principia"
+          test -f "$APP/Info.plist"
+          file "$APP/principia"
+
+      - name: Add Principia data
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-ios/principia.app"
+          rm -rf "$APP/data"
+          cp -R "$PWD/data" "$APP/data"
+
+      - name: Configure iOS bundle
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-ios/principia.app"
+          PLIST="$APP/Info.plist"
+          plist_set() {
+            local key="$1" type="$2" value="$3"
+            if /usr/libexec/PlistBuddy -c "Print :${key}" "$PLIST" >/dev/null 2>&1; then
+              /usr/libexec/PlistBuddy -c "Set :${key} ${value}" "$PLIST"
+            else
+              /usr/libexec/PlistBuddy -c "Add :${key} ${type} ${value}" "$PLIST"
+            fi
+          }
+          plist_set CFBundleExecutable string principia
+          plist_set CFBundleIdentifier string "$BUNDLE_ID"
+          plist_set CFBundleName string Principia
+          plist_set CFBundleDisplayName string Principia
+          plist_set CFBundlePackageType string APPL
+          plist_set CFBundleVersion string "$GITHUB_RUN_NUMBER"
+          plist_set CFBundleShortVersionString string "$MARKETING_VERSION"
+          plist_set MinimumOSVersion string "$IOS_DEPLOYMENT_TARGET"
+          plist_set LSRequiresIPhoneOS bool true
+          plist_set UIRequiresFullScreen bool true
+          plist_set UIStatusBarHidden bool true
+          plist_set UIViewControllerBasedStatusBarAppearance bool false
+          plist_set UIFileSharingEnabled bool true
+          plist_set LSSupportsOpeningDocumentsInPlace bool true
+          /usr/libexec/PlistBuddy -c "Delete :UILaunchScreen" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UILaunchScreen dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :UIDeviceFamily" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:0 integer 1" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:1 integer 2" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleSupportedPlatforms" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :UISupportedInterfaceOrientations" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations:0 string UIInterfaceOrientationLandscapeLeft" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations:1 string UIInterfaceOrientationLandscapeRight" "$PLIST"
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package/Payload
+          ditto build-ios/principia.app package/Payload/Principia.app
+          (cd package && /usr/bin/zip -qry "$GITHUB_WORKSPACE/ios-output/Principia.ipa" Payload)
+          test -f ios-output/Principia.ipa
+
+      - name: Verify IPA
+        run: |
+          set -euo pipefail
+          rm -rf ipa-check
+          mkdir -p ipa-check
+          unzip -q ios-output/Principia.ipa -d ipa-check
+          APP="$PWD/ipa-check/Payload/Principia.app"
+          test -d "$APP" && test -f "$APP/principia" && test -f "$APP/Info.plist" && test -d "$APP/data"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = "$BUNDLE_ID"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$APP/Info.plist")" = "iPhoneOS"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$APP/Info.plist")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$APP/Info.plist")" = "true"
+
+      - name: Print useful build failures
+        if: failure()
+        run: |
+          if [ -f ios-logs/configure.log ]; then
+            grep -n -E 'error:|fatal error:|CMake Error|Could NOT find' ios-logs/configure.log || true
+          fi
+          if [ -f ios-logs/build.log ]; then
+            grep -n -E 'error:|fatal error:|FAILED:|Undefined symbols|undefined symbol|ld:|clang: error:' ios-logs/build.log || true
+          fi
+
+      - name: Upload Principia IPA
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: principia-ios
+          path: ios-output/Principia.ipa
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload iOS logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: principia-ios-logs
+          path: ios-logs/
+          if-no-files-found: warn
+          retention-days: 7

@@ -1,4 +1,7 @@
 #include "main.hh"
+#ifdef SDL_PLATFORM_IOS
+#include "ios_gpu_restore.hh"
+#endif
 #include "pipe.hh"
 #include "settings.hh"
 #include "version.hh"
@@ -44,7 +47,93 @@ to reproduce it, if possible.
     exit(1);
 }
 
+#ifdef SDL_PLATFORM_IOS
+static void SDLCALL ios_log_output(
+        void *userdata,
+        int category,
+        SDL_LogPriority priority,
+        const char *message)
+{
+    FILE *log = static_cast<FILE *>(userdata);
+
+    if (log) {
+        const char *prefix = "I";
+
+        switch (priority) {
+            case SDL_LOG_PRIORITY_TRACE:
+                prefix = "T";
+                break;
+
+            case SDL_LOG_PRIORITY_VERBOSE:
+                prefix = "V";
+                break;
+
+            case SDL_LOG_PRIORITY_DEBUG:
+                prefix = "D";
+                break;
+
+            case SDL_LOG_PRIORITY_INFO:
+                prefix = "I";
+                break;
+
+            case SDL_LOG_PRIORITY_WARN:
+                prefix = "W";
+                break;
+
+            case SDL_LOG_PRIORITY_ERROR:
+                prefix = "E";
+                break;
+
+            case SDL_LOG_PRIORITY_CRITICAL:
+                prefix = "F";
+                break;
+
+            default:
+                prefix = "?";
+                break;
+        }
+
+        fprintf(log, "%s: %s\n", prefix, message);
+        fflush(log);
+    }
+
+    SDL_LogOutputFunction default_output =
+        SDL_GetDefaultLogOutputFunction();
+
+    if (default_output) {
+        default_output(nullptr, category, priority, message);
+    }
+}
+#endif
+
 void redirect_log_output() {
+#ifdef SDL_PLATFORM_IOS
+    char logfile[1024];
+    const char *documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+
+    if (documents) {
+        snprintf(logfile, sizeof(logfile), "%srun.log", documents);
+    } else {
+        snprintf(logfile, sizeof(logfile), "%s/run.log", tms_storage_path());
+    }
+
+    FILE *log = fopen(logfile, "w");
+
+    if (log) {
+        _f_out = log;
+        setvbuf(log, nullptr, _IONBF, 0);
+        SDL_SetLogOutputFunction(ios_log_output, log);
+        SDL_LogInfo(
+            SDL_LOG_CATEGORY_APPLICATION,
+            "Persistent iOS logger opened: %s",
+            logfile);
+    } else {
+        SDL_LogError(
+            SDL_LOG_CATEGORY_APPLICATION,
+            "Could not open persistent log file: %s",
+            logfile);
+    }
+#else
 #if defined(SDL_PLATFORM_SWITCH) || (!defined(DEBUG) && !defined(SDL_PLATFORM_EMSCRIPTEN))
     char logfile[1024];
     snprintf(logfile, 1023, "%s/run.log", tms_storage_path());
@@ -56,6 +145,7 @@ void redirect_log_output() {
     } else {
         tms_errorf("Could not open log file for writing! Nevermind.");
     }
+#endif
 #endif
 }
 
@@ -95,6 +185,15 @@ static void find_data_dir() {
 }
 
 static int do_step = 1;
+
+#ifdef SDL_PLATFORM_IOS
+static bool ios_soft_paused = false;
+static bool ios_rebind_context = false;
+static SDL_GLContext ios_gl_context = NULL;
+static void ios_reset_finger_slots();
+static void ios_handle_interrupt(void);
+static void ios_handle_resume(void);
+#endif
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
@@ -159,6 +258,20 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     _tms.window_width = 1280;
     _tms.window_height = 720;
 
+#elif defined(SDL_PLATFORM_IOS)
+    const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
+
+    if (mode) {
+        _tms.window_width = mode->w;
+        _tms.window_height = mode->h;
+    } else {
+        tms_errorf("Couldn't get display mode: %s", SDL_GetError());
+        _tms.window_width = 1280;
+        _tms.window_height = 720;
+    }
+
+    tms_infof("set initial res to %dx%d", _tms.window_width, _tms.window_height);
+
 #elif !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_SWITCH)
     const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
     SDL_Point screen;
@@ -189,7 +302,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
     uint32_t flags = SDL_WINDOW_OPENGL | 0;
 
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_SWITCH)
+#ifdef SDL_PLATFORM_IOS
+    flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#endif
+
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_SWITCH) || defined(SDL_PLATFORM_IOS)
     flags |= SDL_WINDOW_FULLSCREEN;
 #else
     _tms.window_width = settings["window_width"]->v.i;
@@ -218,11 +335,28 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     SDL_SetWindowFillDocument(_tms._window, true);
 #endif
 
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_SWITCH)
+#ifdef SDL_PLATFORM_IOS
+    SDL_GetWindowSizeInPixels(
+            _tms._window,
+            &_tms.opengl_width,
+            &_tms.opengl_height);
+
+    _tms.window_width = _tms.opengl_width;
+    _tms.window_height = _tms.opengl_height;
+
+#elif defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_SWITCH)
     SDL_GetWindowSizeInPixels(_tms._window, &_tms.window_width, &_tms.window_height);
 #endif
 
     float content_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+
+#ifdef SDL_PLATFORM_IOS
+    float pixel_density = SDL_GetWindowPixelDensity(_tms._window);
+
+    if (pixel_density > 0.f)
+        content_scale = pixel_density;
+#endif
+
     _tms.xppcm = 108.f / 2.54f * 1.5f * content_scale;
     _tms.yppcm = 107.f / 2.54f * 1.5f * content_scale;
 
@@ -245,6 +379,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
     if (gl_context == NULL)
         tms_fatalf("Error creating GL Context: %s", SDL_GetError());
+#ifdef SDL_PLATFORM_IOS
+    ios_gl_context = gl_context;
+#endif
 
     int version;
     if (_tms.use_gles)
@@ -302,6 +439,9 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *ev) {
                 break;
         #else
             case SDL_EVENT_WINDOW_RESIZED: {
+#ifdef SDL_PLATFORM_IOS
+                break;
+#else
                 tms_infof("Window %d resized to %dx%d",
                         ev->window.windowID, ev->window.data1,
                         ev->window.data2);
@@ -310,6 +450,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *ev) {
 
                 _tms.window_width  = _tms.opengl_width  = w;
                 _tms.window_height = _tms.opengl_height = h;
+#endif
 
                 tproject_window_size_changed();
             } break;
@@ -320,6 +461,22 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *ev) {
                 settings["window_maximized"]->v.b = false;
                 break;
         #endif
+
+#ifdef SDL_PLATFORM_IOS
+        case SDL_EVENT_WILL_ENTER_BACKGROUND:
+        case SDL_EVENT_DID_ENTER_BACKGROUND:
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+        case SDL_EVENT_WINDOW_OCCLUDED:
+            ios_handle_interrupt();
+            break;
+
+        case SDL_EVENT_WILL_ENTER_FOREGROUND:
+        case SDL_EVENT_DID_ENTER_FOREGROUND:
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+        case SDL_EVENT_WINDOW_EXPOSED:
+            ios_handle_resume();
+            break;
+#endif
 
         case SDL_EVENT_QUIT:
             _tms.state = TMS_STATE_QUITTING;
@@ -373,10 +530,22 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     }
 
     tms_step();
+#ifdef SDL_PLATFORM_IOS
+    if (ios_rebind_context || _tms.ios_reload_buffers) {
+        if (ios_gl_context && _tms._window)
+            SDL_GL_MakeCurrent(_tms._window, ios_gl_context);
+        ios_rebind_context = false;
+        ios_restore_gpu_after_resume();
+    }
+#endif
     tms_begin_frame();
     tms_render();
     SDL_GL_SwapWindow(_tms._window);
     tms_end_frame();
+#ifdef SDL_PLATFORM_IOS
+    if (_tms.ios_reload_buffers > 0)
+        _tms.ios_reload_buffers--;
+#endif
 
     return SDL_APP_CONTINUE;
 }
@@ -398,8 +567,66 @@ int mouse_button_to_pointer_id(int button) {
 
 static uint64_t finger_ids[MAX_P];
 
+#ifdef SDL_PLATFORM_IOS
+static bool finger_slots_used[MAX_P];
+static void ios_reset_finger_slots()
+{
+    for (int x = 0; x < MAX_P; ++x) {
+        finger_ids[x] = 0;
+        finger_slots_used[x] = false;
+    }
+
+    mouse_down = 0;
+}
+
+static void ios_handle_interrupt(void)
+{
+    ios_reset_finger_slots();
+    ios_rebind_context = true;
+    if (!ios_soft_paused) {
+        tproject_soft_pause();
+        ios_soft_paused = true;
+    }
+    do_step = 0;
+}
+
+static void ios_handle_resume(void)
+{
+    ios_reset_finger_slots();
+    ios_rebind_context = true;
+    if (ios_gl_context && _tms._window)
+        SDL_GL_MakeCurrent(_tms._window, ios_gl_context);
+    _tms.ios_reload_buffers = 2;
+    if (ios_soft_paused) {
+        tproject_soft_resume();
+        ios_soft_paused = false;
+    }
+    do_step = 1;
+}
+#endif
+
 static int finger_to_pointer(uint64_t finger, bool create) {
-#ifdef SDL_PLATFORM_WINDOWS
+#ifdef SDL_PLATFORM_IOS
+    for (int x = 0; x < MAX_P; x++) {
+        if (finger_slots_used[x] && finger_ids[x] == finger)
+            return x;
+    }
+
+    if (!create)
+        return -1;
+
+    for (int x = 0; x < MAX_P; x++) {
+        if (!finger_slots_used[x]) {
+            finger_ids[x] = finger;
+            finger_slots_used[x] = true;
+            return x;
+        }
+    }
+
+    finger_ids[MAX_P-1] = finger;
+    finger_slots_used[MAX_P-1] = true;
+    return MAX_P-1;
+#elif defined(SDL_PLATFORM_WINDOWS)
     // Windows gives each finger tap session an unique incrementing ID that starts on each boot, so
     // we need to keep track of them and allocate in slots that fit TMS' pointer ID system.
 
@@ -463,24 +690,53 @@ int T_intercept_input(SDL_Event ev) {
             spec.data.button.pointer_id = finger_to_pointer(ev.tfinger.fingerID, true);
             spec.data.button.x = (int)(ev.tfinger.x*(float)_tms.window_width);
             spec.data.button.y = _tms.window_height-(int)(ev.tfinger.y*(float)_tms.window_height);
+#ifdef SDL_PLATFORM_IOS
+            spec.data.button.button = SDL_BUTTON_LEFT;
+#endif
             break;
 
         case SDL_EVENT_FINGER_UP:
             spec.type = TMS_EV_POINTER_UP;
             f = finger_to_pointer(ev.tfinger.fingerID, false);
+
+#ifdef SDL_PLATFORM_IOS
+            if (f < 0)
+                return T_OK;
+#endif
+
             spec.data.button.pointer_id = f;
             spec.data.button.x = (int)(ev.tfinger.x*(float)_tms.window_width);
             spec.data.button.y = _tms.window_height-(int)(ev.tfinger.y*(float)_tms.window_height);
 
+#ifdef SDL_PLATFORM_IOS
+            spec.data.button.button = SDL_BUTTON_LEFT;
+#endif
+
             // Free up the slot for this finger ID
+#ifdef SDL_PLATFORM_IOS
+            finger_slots_used[SDL_min(f, MAX_P - 1)] = false;
+#else
             finger_ids[SDL_min(f, MAX_P - 1)] = 0;
+#endif
             break;
 
         case SDL_EVENT_FINGER_MOTION:
             spec.type = TMS_EV_POINTER_DRAG;
+#ifdef SDL_PLATFORM_IOS
+            f = finger_to_pointer(ev.tfinger.fingerID, false);
+
+            if (f < 0)
+                return T_OK;
+
+            spec.data.button.pointer_id = f;
+#else
             spec.data.button.pointer_id = finger_to_pointer(ev.tfinger.fingerID, false);
+#endif
             spec.data.button.x = (int)(ev.tfinger.x*(float)_tms.window_width);
             spec.data.button.y = _tms.window_height-(int)(ev.tfinger.y*(float)_tms.window_height);
+#ifdef SDL_PLATFORM_IOS
+            spec.data.button.button = SDL_BUTTON_LEFT;
+#endif
             break;
 
         case SDL_EVENT_MOUSE_BUTTON_DOWN:

@@ -85,7 +85,14 @@ float imgui_ui_scale = 1.f;
 static void load_fonts() {
     //TODO free existing fonts
 
+#ifdef SDL_PLATFORM_IOS
+    float content_scale = SDL_GetWindowPixelDensity(_tms._window);
+
+    if (content_scale <= 0.f)
+        content_scale = 1.f;
+#else
     float content_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+#endif
     float size_pixels = roundf(14.f * settings["uiscale"]->v.f * content_scale);
 
     tms_infof("font size %fpx", size_pixels);
@@ -96,7 +103,14 @@ static void load_fonts() {
 
 static void update_imgui_ui_scale() {
     float scale_factor = settings["uiscale"]->v.f;
+#ifdef SDL_PLATFORM_IOS
+    float content_scale = SDL_GetWindowPixelDensity(_tms._window);
+
+    if (content_scale <= 0.f)
+        content_scale = 1.f;
+#else
     float content_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+#endif
     ImGui::GetStyle().ScaleAllSizes(scale_factor * content_scale);
     imgui_ui_scale = scale_factor * content_scale;
 }
@@ -169,6 +183,15 @@ void ImguiDriver::pre_render() {
 
     //start frame
     ImGui_ImplSDL3_NewFrame();
+
+#ifdef SDL_PLATFORM_IOS
+    /*
+     * TMS already exposes framebuffer-pixel dimensions on iOS, so
+     * prevent ImGui from applying the Retina scale a second time.
+     */
+    io.DisplayFramebufferScale = ImVec2(1.f, 1.f);
+#endif
+
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
 

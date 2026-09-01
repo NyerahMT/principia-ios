@@ -3,6 +3,10 @@
 #include "print.h"
 #include <string.h>
 
+#ifdef SDL_PLATFORM_IOS
+#include "ios_gpu_restore.hh"
+#endif
+
 struct tms_gbuffer*
 tms_gbuffer_alloc(size_t size)
 {
@@ -59,6 +63,12 @@ tms_gbuffer_set_usage(struct tms_gbuffer *b, int usage)
 int
 tms_gbuffer_upload(struct tms_gbuffer *b)
 {
+#ifdef SDL_PLATFORM_IOS
+    ios_restore_gpu_after_resume();
+    if (b->vbo == 0 || !glIsBuffer(b->vbo))
+        glGenBuffers(1, &b->vbo);
+#endif
+
     glBindBuffer(b->target, b->vbo);
     glBufferData(b->target, b->size, b->buf, b->usage);
 
@@ -74,6 +84,12 @@ tms_gbuffer_upload(struct tms_gbuffer *b)
 int
 tms_gbuffer_upload_partial(struct tms_gbuffer *b, size_t size)
 {
+#ifdef SDL_PLATFORM_IOS
+    ios_restore_gpu_after_resume();
+    if (b->vbo == 0 || !glIsBuffer(b->vbo))
+        glGenBuffers(1, &b->vbo);
+#endif
+
     glBindBuffer(b->target, b->vbo);
     glBufferData(b->target, size, b->buf, b->usage);
 
@@ -85,6 +101,10 @@ tms_gbuffer_upload_partial(struct tms_gbuffer *b, size_t size)
 int
 tms_gbuffer_update(struct tms_gbuffer *b, size_t start_offs, size_t num_bytes)
 {
+#ifdef SDL_PLATFORM_IOS
+    if (b->vbo == 0 || !glIsBuffer(b->vbo))
+        glGenBuffers(1, &b->vbo);
+#endif
     glBindBuffer(b->target, b->vbo);
     glBufferData(b->target, num_bytes, b->buf + start_offs, GL_DYNAMIC_DRAW);
 
@@ -104,4 +124,3 @@ tms_gbuffer_get_buffer(struct tms_gbuffer *b)
 {
     return b->buf;
 }
-

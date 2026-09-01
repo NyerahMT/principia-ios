@@ -489,6 +489,19 @@ tms_texture_set_filtering(struct tms_texture *tex, int filter)
 int
 tms_texture_bind(struct tms_texture *tex)
 {
+#ifdef SDL_PLATFORM_IOS
+    if (tex->is_uploaded &&
+        (tex->gl_texture == 0 || !glIsTexture(tex->gl_texture))) {
+
+        tms_infof(
+            "iOS: rebuilding invalid texture %s",
+            tex->filename ? tex->filename : "(lazy texture)");
+
+        tex->is_uploaded = 0;
+        tex->gl_texture = 0;
+    }
+#endif
+
     if (!tex->is_uploaded && !tex->is_buffered) {
         /* lazy load */
         if (tex->buffer_fn){
@@ -499,7 +512,25 @@ tms_texture_bind(struct tms_texture *tex)
 #ifdef DEBUG_TEXTURES
             tms_debugf("lazy-loading(%p): filename %s", tex, tex->filename?tex->filename:"???");
 #endif
-        } else return 1;
+        } else {
+#ifdef SDL_PLATFORM_IOS
+            if (tex->filename &&
+                strcmp(tex->filename, "mem") != 0) {
+
+                char *filename = strdup(tex->filename);
+
+                if (tms_texture_load(tex, filename) == T_OK) {
+                    tms_texture_upload(tex);
+                }
+
+                free(filename);
+            } else {
+                return 1;
+            }
+#else
+            return 1;
+#endif
+        }
 
         if (!tex->is_uploaded) {
             tms_errorf("texture lazy-load did not upload anything! :(");
@@ -507,7 +538,15 @@ tms_texture_bind(struct tms_texture *tex)
         }
     }
 
+#ifdef SDL_PLATFORM_IOS
+    if (!tex->is_uploaded && tex->is_buffered) {
+        if (tms_texture_upload(tex) != T_OK) {
+            tms_errorf("iOS: failed to re-upload buffered texture");
+            return 1;
+        }
+    }
+#endif
+
     glBindTexture(GL_TEXTURE_2D, tex->gl_texture);
     return T_OK;
 }
-

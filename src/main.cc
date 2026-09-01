@@ -1,4 +1,7 @@
 #include "main.hh"
+#ifdef SDL_PLATFORM_IOS
+#include "ios_gpu_restore.hh"
+#endif
 #include "adventure.hh"
 #include "cable.hh"
 #include "display.hh"
@@ -178,6 +181,10 @@ static void ao_end() {
 
 static void begin() {
     time_start = SDL_GetTicks();
+
+#ifdef SDL_PLATFORM_IOS
+    ios_bind_window_for_color_pass();
+#endif
 
     /*if (P.best_variable_in_the_world != 1337) {
         glClearColor(.05f, .05f, .05f, 1.f);
@@ -1034,9 +1041,15 @@ void tproject_step() {
 }
 
 void tproject_soft_resume() {
+#ifdef SDL_PLATFORM_IOS
+    if (G && _tms.screen == &G->super)
+        G->reset_touch();
+#endif
+
     ui::open_dialog(CLOSE_ABSOLUTELY_ALL_DIALOGS);
 
     tms_infof("SOFT RESUME ---------------------");
+#ifndef SDL_PLATFORM_IOS
     for (int x=0; x<5; x++) {
         glActiveTexture(GL_TEXTURE0+x);
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -1044,6 +1057,10 @@ void tproject_soft_resume() {
     glActiveTexture(GL_TEXTURE0);
 
     init_framebuffers();
+#endif
+#ifdef SDL_PLATFORM_IOS
+    ios_restore_gpu_after_resume();
+#endif
 
     network::soft_resume();
 
@@ -1051,12 +1068,26 @@ void tproject_soft_resume() {
 }
 
 void tproject_soft_pause() {
+#ifdef SDL_PLATFORM_IOS
+    if (G && _tms.screen == &G->super)
+        G->reset_touch();
+#endif
+
     sm::pause_all();
 
+#ifdef SDL_PLATFORM_IOS
+    if (G && _tms.screen == &G->super && G->state.sandbox && !G->state.test_playing) {
+        tms_infof("saving level before iOS background");
+
+        if (!G->autosave())
+            tms_errorf("iOS background autosave failed");
+    }
+#else
     if (_tms.screen == &G->super && G->state.sandbox && W->is_paused() && !G->state.test_playing && G->state.modified) {
         tms_infof("saving level");
         W->save(true);
     }
+#endif
 
     tms_infof("SOFT PAUSE ---------------------");
 

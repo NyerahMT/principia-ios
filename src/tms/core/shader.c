@@ -20,6 +20,19 @@ static GLsizei infolog_length;
 /* dummy shader used for global defines */
 struct tms_shader _tms_global_shader = {0};
 
+#ifdef SDL_PLATFORM_IOS
+static void
+drain_preexisting_gl_errors(const char *where)
+{
+    GLenum err;
+
+    while ((err = glGetError()) != GL_NO_ERROR) {
+        tms_warnf("iOS: clearing pre-existing OpenGL ES error 0x%04x before %s",
+                (unsigned int)err, where);
+    }
+}
+#endif
+
 struct tms_shader*
 tms_shader_alloc(void)
 {
@@ -120,8 +133,13 @@ tms_shader_define(struct tms_shader *s, const char *name, const char *value)
 
 static GLint compile(struct tms_shader *sh, GLenum st, const char *src)
 {
+#ifdef SDL_PLATFORM_IOS
+    drain_preexisting_gl_errors("shader compilation");
+#else
     int ierr = glGetError();
         tms_assertf(ierr == 0, "vafan compile -1 tjena %d", ierr);
+#endif
+
     GLint s = glCreateShader(st);
     GLint success;
     const char *type = st == GL_VERTEX_SHADER ? "vertex shader"
@@ -213,7 +231,11 @@ tms_shader_get_program(struct tms_shader *s, int pipeline)
     GLint status;
     struct tms_program *p;
 
+#ifdef SDL_PLATFORM_IOS
+    drain_preexisting_gl_errors("shader program linking");
+#else
         tms_assertf(glGetError() == 0, "vafan -1 tjena");
+#endif
 
     if (pipeline == TMS_NO_PIPELINE) {
         if (s->program)

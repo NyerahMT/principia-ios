@@ -11,7 +11,6 @@ on:
       - 'scripts/**'
       - 'CMakeLists.txt'
       - '.github/workflows/iOS.yml'
-
   pull_request:
     paths:
       - 'src/**'
@@ -22,7 +21,6 @@ on:
       - 'scripts/**'
       - 'CMakeLists.txt'
       - '.github/workflows/iOS.yml'
-
   workflow_dispatch:
 
 permissions:
@@ -33,8 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUNDLE_ID: com.nyerahmt.principia.ios
-  MARKETING_VERSION: 0.0.1
+  BUNDLE_ID: se.principia-web.principia
   IOS_DEPLOYMENT_TARGET: '15.0'
 
 jobs:
@@ -53,68 +50,52 @@ jobs:
         with:
           cmake-version: '3.31.8'
 
-      - name: Prepare output directories
-        run: |
-          mkdir -p ios-logs
-          mkdir -p ios-output
-
-      - name: Show toolchain
-        run: |
-          set -o pipefail
-          {
-            sw_vers
-            echo
-            xcodebuild -version
-            echo
-            xcrun --sdk iphoneos --show-sdk-version
-            echo
-            xcrun --sdk iphoneos --show-sdk-path
-            echo
-            cmake --version
-          } 2>&1 | tee ios-logs/environment.log
-
       - name: Install Ninja
         run: |
           set -euo pipefail
           if ! command -v ninja >/dev/null 2>&1; then
             brew install ninja
           fi
-          ninja --version
 
-      - name: Determine dependency cache key
-        id: deps
+      - name: Read Principia version
         run: |
           set -euo pipefail
-          echo "sdk=$(xcrun --sdk iphoneos --show-sdk-version)" >> "$GITHUB_OUTPUT"
+          VERSION_CODE="$(awk '/^#define PRINCIPIA_VERSION_CODE / { print $3; exit }' src/version_info.hh)"
+          VERSION_NAME="$(sed -nE 's/^#define PRINCIPIA_VERSION_STRING "([^"]+)".*/\1/p' src/version_info.hh)"
+          test -n "$VERSION_CODE"
+          test -n "$VERSION_NAME"
+          echo "PRINCIPIA_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "PRINCIPIA_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+
+      - name: Determine iOS SDK version
+        id: sdk
+        run: echo "version=$(xcrun --sdk iphoneos --show-sdk-version)" >> "$GITHUB_OUTPUT"
 
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: principia-ios-${{ runner.os }}-${{ runner.arch }}-${{ steps.deps.outputs.sdk }}
+          key: principia-ios-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk.outputs.version }}
           max-size: 1G
 
       - name: Restore iOS dependencies
-        id: cache
+        id: deps-cache
         uses: actions/cache@v4
         with:
           path: build-ios-deps
-          key: principia-ios-device-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.deps.outputs.sdk }}-${{ hashFiles('scripts/build-ios-deps.sh') }}
+          key: principia-ios-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk.outputs.version }}-${{ hashFiles('scripts/build-ios-deps.sh') }}
 
       - name: Build iOS dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          set -o pipefail
-          chmod +x scripts/build-ios-deps.sh
-          IOS_SDK=iphoneos IOS_ARCH=arm64 IOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
-            ./scripts/build-ios-deps.sh 2>&1 | tee ios-logs/dependencies.log
-
-      - name: Report dependency cache hit
-        if: steps.cache.outputs.cache-hit == 'true'
-        run: echo "Using cached iOS device dependencies." | tee ios-logs/dependencies.log
+          set -euo pipefail
+          IOS_SDK=iphoneos \
+          IOS_ARCH=arm64 \
+          IOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
+            ./scripts/build-ios-deps.sh
 
       - name: Configure Principia
         run: |
-          set -o pipefail
+          set -euo pipefail
           cmake -S . -B build-ios -G Ninja \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_SYSTEM_PROCESSOR=arm64 \
@@ -138,29 +119,21 @@ jobs:
             -DCURL_LIBRARY="$PWD/build-ios-deps/lib/libcurl.a" \
             -DCURL_INCLUDE_DIR="$PWD/build-ios-deps/include" \
             -DUSE_VENDORED_SDL3=ON \
-            -DUNITY_BUILD=OFF \
-            2>&1 | tee ios-logs/configure.log
+            -DUNITY_BUILD=OFF
 
       - name: Build Principia
         run: |
-          set -o pipefail
-          cmake --build build-ios --parallel "$(sysctl -n hw.ncpu)" \
-            2>&1 | tee ios-logs/build.log
-          ccache -s | tee -a ios-logs/build.log
+          set -euo pipefail
+          cmake --build build-ios --parallel "$(sysctl -n hw.ncpu)"
+          ccache -s
 
-      - name: Verify app bundle
+      - name: Assemble app bundle
         run: |
           set -euo pipefail
           APP="$PWD/build-ios/principia.app"
           test -d "$APP"
           test -f "$APP/principia"
           test -f "$APP/Info.plist"
-          file "$APP/principia"
-
-      - name: Add Principia data
-        run: |
-          set -euo pipefail
-          APP="$PWD/build-ios/principia.app"
           rm -rf "$APP/data"
           cp -R "$PWD/data" "$APP/data"
 
@@ -177,6 +150,7 @@ jobs:
             sips -z "$size" "$size" "$SRC" --out "$APP/${name}.png" >/dev/null
           }
 
+          # iPhone
           make_icon 40 AppIcon20x20@2x
           make_icon 60 AppIcon20x20@3x
           make_icon 58 AppIcon29x29@2x
@@ -186,6 +160,7 @@ jobs:
           make_icon 120 AppIcon60x60@2x
           make_icon 180 AppIcon60x60@3x
 
+          # iPad
           make_icon 20 AppIcon20x20
           make_icon 40 AppIcon20x20@2x~ipad
           make_icon 29 AppIcon29x29
@@ -201,6 +176,7 @@ jobs:
           set -euo pipefail
           APP="$PWD/build-ios/principia.app"
           PLIST="$APP/Info.plist"
+
           plist_set() {
             local key="$1" type="$2" value="$3"
             if /usr/libexec/PlistBuddy -c "Print :${key}" "$PLIST" >/dev/null 2>&1; then
@@ -209,13 +185,14 @@ jobs:
               /usr/libexec/PlistBuddy -c "Add :${key} ${type} ${value}" "$PLIST"
             fi
           }
+
           plist_set CFBundleExecutable string principia
           plist_set CFBundleIdentifier string "$BUNDLE_ID"
           plist_set CFBundleName string Principia
           plist_set CFBundleDisplayName string Principia
           plist_set CFBundlePackageType string APPL
-          plist_set CFBundleVersion string "$GITHUB_RUN_NUMBER"
-          plist_set CFBundleShortVersionString string "$MARKETING_VERSION"
+          plist_set CFBundleVersion string "$PRINCIPIA_VERSION_CODE"
+          plist_set CFBundleShortVersionString string "$PRINCIPIA_VERSION_NAME"
           plist_set MinimumOSVersion string "$IOS_DEPLOYMENT_TARGET"
           plist_set LSRequiresIPhoneOS bool true
           plist_set UIRequiresFullScreen bool true
@@ -269,11 +246,13 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:4 string AppIcon76x76@2x" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:5 string AppIcon83.5x83.5@2x" "$PLIST"
 
+          plutil -lint "$PLIST"
+
       - name: Package IPA
         run: |
           set -euo pipefail
-          rm -rf package
-          mkdir -p package/Payload
+          rm -rf package ios-output
+          mkdir -p package/Payload ios-output
           ditto build-ios/principia.app package/Payload/Principia.app
           (cd package && /usr/bin/zip -qry "$GITHUB_WORKSPACE/ios-output/Principia.ipa" Payload)
           test -f ios-output/Principia.ipa
@@ -285,40 +264,27 @@ jobs:
           mkdir -p ipa-check
           unzip -q ios-output/Principia.ipa -d ipa-check
           APP="$PWD/ipa-check/Payload/Principia.app"
-          test -d "$APP" && test -f "$APP/principia" && test -f "$APP/Info.plist" && test -d "$APP/data"
+          PLIST="$APP/Info.plist"
+
+          test -d "$APP"
+          test -f "$APP/principia"
+          test -f "$PLIST"
+          test -d "$APP/data"
           test -f "$APP/AppIcon60x60@3x.png"
           test -f "$APP/AppIcon76x76@2x.png"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = "$BUNDLE_ID"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$APP/Info.plist")" = "iPhoneOS"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$APP/Info.plist")" = "true"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$APP/Info.plist")" = "true"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$APP/Info.plist")" = "principia"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:7' "$APP/Info.plist")" = "AppIcon60x60@3x"
-
-      - name: Print useful build failures
-        if: failure()
-        run: |
-          if [ -f ios-logs/configure.log ]; then
-            grep -n -E 'error:|fatal error:|CMake Error|Could NOT find' ios-logs/configure.log || true
-          fi
-          if [ -f ios-logs/build.log ]; then
-            grep -n -E 'error:|fatal error:|FAILED:|Undefined symbols|undefined symbol|ld:|clang: error:' ios-logs/build.log || true
-          fi
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = "$BUNDLE_ID"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" = "$PRINCIPIA_VERSION_CODE"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = "$PRINCIPIA_VERSION_NAME"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$PLIST")" = "iPhoneOS"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$PLIST")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$PLIST")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$PLIST")" = "principia"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:7' "$PLIST")" = "AppIcon60x60@3x"
 
       - name: Upload Principia IPA
-        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: principia-ios
           path: ios-output/Principia.ipa
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload iOS logs
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: principia-ios-logs
-          path: ios-logs/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7

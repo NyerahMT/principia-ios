@@ -51,6 +51,9 @@ menu_main::menu_main() : menu_base(true) {
     this->wdg_play->set_label("   Play   ", font::large);
     this->wdg_play->priority = 1000;
     this->wdg_play->render_background = true;
+#ifdef SDL_PLATFORM_IOS
+    this->wdg_play->lmody += 1.0f;
+#endif
     this->wdg_play->add();
     this->wdg_play->label->set_scale(0.9);
 
@@ -60,6 +63,9 @@ menu_main::menu_main() : menu_base(true) {
     this->wdg_create->set_label(" Create ", font::large);
     this->wdg_create->priority = 900;
     this->wdg_create->render_background = true;
+#ifdef SDL_PLATFORM_IOS
+    this->wdg_create->lmody += 1.0f;
+#endif
     this->wdg_create->add();
     this->wdg_create->label->set_scale(0.9);
 

@@ -1,4 +1,7 @@
 #include "loading_screen.hh"
+#ifdef SDL_PLATFORM_IOS
+#include "ios_gpu_restore.hh"
+#endif
 #include "menu_main.hh"
 #include "settings.hh"
 #include "text.hh"
@@ -47,7 +50,7 @@ int
 loading_screen::render()
 {
 #ifdef SDL_PLATFORM_IOS
-    glBindFramebuffer(GL_FRAMEBUFFER, viewFramebuffer);
+    ios_bind_window_framebuffer();
 #endif
     glClearColor(0.02f, 0.02f, 0.02f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);

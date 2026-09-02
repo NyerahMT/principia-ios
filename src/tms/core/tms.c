@@ -11,6 +11,10 @@
 #include "project.h"
 #include "hash.h"
 
+#ifdef SDL_PLATFORM_IOS
+#include "ios_gpu_restore.hh"
+#endif
+
 struct tms_singleton _tms = {
     .in_frame = 0,
     .window_width = 0,
@@ -134,7 +138,9 @@ tms_begin_frame(void)
     tms.in_frame = 1;
 
 #ifdef SDL_PLATFORM_IOS
-    glBindFramebuffer(GL_FRAMEBUFFER, viewFramebuffer);
+    ios_bind_window_drawable();
+    if (tms.ios_reload_buffers)
+        ios_restore_gpu_after_resume();
 #endif
 
     tms_screen_begin_frame(tms.active_screen);
@@ -185,4 +191,3 @@ tms_render(void)
 
     return T_OK;
 }
-

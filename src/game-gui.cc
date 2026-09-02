@@ -819,7 +819,17 @@ game::menu_handle_event(tms::event *ev)
                         pending_ent[pid]->ghost_update();
                     } else if (sliding_menu[pid]) {
                         if (settings["smooth_menu"]->v.b) {
+#ifdef SDL_PLATFORM_IOS
+                            float delta = tdown_p[pid].y - sp.y;
+                            float pixel_density = SDL_GetWindowPixelDensity(_tms._window);
+
+                            if (pixel_density > 0.f)
+                                delta /= pixel_density;
+
+                            menu_cam_vel -= (_tms.yppcm / 1000.f) * delta;
+#else
                             menu_cam_vel -= (_tms.yppcm / 1000.f) * (tdown_p[pid].y - sp.y);
+#endif
                         } else {
                             menu_cam_vel -= tdown_p[pid].y - sp.y;
                         }

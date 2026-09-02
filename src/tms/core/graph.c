@@ -561,6 +561,10 @@ static int bind_mesh(struct tms_rstate *state, void *value) {
     struct tms_gbuffer *m = value;
 
     if (m) {
+#ifdef SDL_PLATFORM_IOS
+        if (m->buf && (_tms.ios_reload_buffers || m->vbo == 0 || !glIsBuffer(m->vbo)))
+            tms_gbuffer_upload(m);
+#endif
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m->vbo);
 
         tms_assertf(glIsBuffer(m->vbo), "is not buffer");

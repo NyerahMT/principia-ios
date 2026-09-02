@@ -1305,10 +1305,19 @@ void game::back() {
             if (W->level_id_type == LEVEL_DB) {
                 ui::open_dialog(DIALOG_COMMUNITY);
             } else {
+                #ifdef SDL_PLATFORM_IOS
+                if (this->state.sandbox && !this->state.test_playing) {
+                    tms_infof("Autosaving before leaving sandbox.");
+
+                    if (!this->autosave())
+                        tms_errorf("iOS sandbox-exit autosave failed");
+                }
+#else
                 if (this->state.sandbox && W->is_paused() && !this->state.test_playing && this->state.modified) {
                     tms_infof("Autosaving.");
                     W->save(SAVE_TYPE_AUTOSAVE);
                 }
+#endif
                 sm::stop_all();
                 tms::set_screen(P.s_menu_main);
             }
@@ -1491,6 +1500,22 @@ int game::step(double dt) {
     if (!settings["touch_controls"]->v.b)
         step_tooltip();
 
+#ifdef SDL_PLATFORM_IOS
+    /*
+     * On iOS, periodically save whenever we are editing a sandbox.
+     * Do not depend on pointer state or the desktop paused-state gate.
+     */
+    if (this->state.sandbox && !this->state.test_playing) {
+        if (_tms.last_time > this->state.last_autosave_try+GAME_AUTOSAVE_INTERVAL) {
+            this->state.last_autosave_try = _tms.last_time;
+
+            tms_infof("autosaving");
+
+            if (!this->autosave())
+                tms_errorf("iOS periodic autosave failed");
+        }
+    }
+#else
     if (this->state.sandbox && W->is_paused() && !this->state.test_playing) {
         /* do autosave */
         if (_tms.last_time > this->state.last_autosave_try+GAME_AUTOSAVE_INTERVAL && !down[0] && !down[1]) {
@@ -1507,6 +1532,7 @@ int game::step(double dt) {
             }
         }
     }
+#endif
 
 #ifdef PROFILING
     Uint32 ss = SDL_GetTicks();

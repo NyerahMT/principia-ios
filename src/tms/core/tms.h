@@ -107,6 +107,9 @@ extern struct tms_singleton {
     double gamma;
 
     bool is_paused;
+#ifdef SDL_PLATFORM_IOS
+    int ios_reload_buffers;
+#endif
 
     uint64_t time_accum;
     uint64_t delta_cap;

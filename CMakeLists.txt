@@ -47,6 +47,8 @@ endif()
 if(ANDROID)
 	cmake_minimum_required(VERSION 3.20)
 	include(PrincipiaAndroidLibs)
+elseif(IOS)
+	# OpenGL ES is provided by the iOS SDK.
 elseif(NOT NINTENDO_SWITCH)
 	set(OpenGL_GL_PREFERENCE GLVND)
 	find_package(OpenGL REQUIRED)
@@ -73,7 +75,9 @@ if(LINUX)
 	option(USE_GLES "Use OpenGL ES on Linux (Experimental)" FALSE)
 endif()
 
-if(USE_GLES OR ANDROID OR EMSCRIPTEN OR NINTENDO_SWITCH)
+if(IOS)
+	set(SHOULD_USE_GLES TRUE)
+elseif(USE_GLES OR ANDROID OR EMSCRIPTEN OR NINTENDO_SWITCH)
 	set(SHOULD_USE_GLES TRUE)
 else()
 	set(SHOULD_USE_GLES FALSE)
@@ -193,10 +197,17 @@ endif()
 
 list(APPEND LIBS SDL3::SDL3)
 
-if(SHOULD_USE_GLES)
-	list(APPEND LIBS GLESv2)
+if(IOS)
+	list(APPEND LIBS
+		"-framework OpenGLES"
+		"-framework Security"
+		"-framework CoreFoundation")
 else()
-	list(APPEND LIBS OpenGL::GL)
+	if(SHOULD_USE_GLES)
+		list(APPEND LIBS GLESv2)
+	else()
+		list(APPEND LIBS OpenGL::GL)
+	endif()
 endif()
 
 if(ANDROID)

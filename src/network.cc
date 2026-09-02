@@ -183,6 +183,9 @@ void handle_login(header_data &hd, int http_code) {
 
     if (hd.notify_message) {
         ui::message(hd.notify_message);
+#ifdef SDL_PLATFORM_IOS
+        P.add_action(ACTION_VERSION_CHECK, 0);
+#endif
         P.add_action(ACTION_REFRESH_HEADER_DATA, 0);
         ui::emit_signal(SIGNAL_LOGIN_SUCCESS);
 

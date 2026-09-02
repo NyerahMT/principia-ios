@@ -1,5 +1,8 @@
 #include "tms.h"
 #include "framebuffer.h"
+#ifdef SDL_PLATFORM_IOS
+#include "ios_gpu_restore.hh"
+#endif
 #include "gbuffer.h"
 #include "varray.h"
 #include "mesh.h"
@@ -157,10 +160,14 @@ tms_fb_enable_depth(struct tms_fb *fb, int format)
 
     }
 
+#ifdef SDL_PLATFORM_IOS
+    ios_bind_window_framebuffer();
+#else
     if (glad_glBindFramebuffer)
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     else
         glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
+#endif
 
     tms_assertf((ierr = glGetError()) == 0, "gl error %d in tms_fb_enable_depth 7 (end)", ierr);
 }
@@ -192,10 +199,14 @@ tms_fb_enable_depth_texture(struct tms_fb *fb, int format)
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
+#ifdef SDL_PLATFORM_IOS
+    ios_bind_window_framebuffer();
+#else
     if (glad_glBindFramebuffer)
         glad_glBindFramebuffer(GL_FRAMEBUFFER, 0);
     else
         glad_glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
+#endif
 }
 
 void
@@ -263,10 +274,14 @@ tms_fb_add_texture(struct tms_fb *fb, int format,
 
     fb->num_textures ++;
 
+#ifdef SDL_PLATFORM_IOS
+    ios_bind_window_framebuffer();
+#else
     if (glad_glBindFramebuffer)
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     else
         glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
+#endif
 
     tms_assertf((ierr = glGetError()) == 0, "gl error %d in tms_fb_add_texture 16 (end)", ierr);
 }
@@ -381,10 +396,14 @@ static int _bind(struct tms_fb *f)
 
         glViewport(0, 0, f->width, f->height);
     } else {
+#ifdef SDL_PLATFORM_IOS
+        ios_bind_window_framebuffer();
+#else
         if (glad_glBindFramebuffer)
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         else
             glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
+#endif
 
         glViewport(0, 0, tms.opengl_width, tms.opengl_height);
     }
@@ -464,4 +483,3 @@ tms_fb_render_to(struct tms_fb *f,
     tms_fb_render(f, p);
     tms_fb_unbind(dest);
 }
-

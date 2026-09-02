@@ -1,0 +1,324 @@
+name: iOS
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'data/**'
+      - 'packaging/**'
+      - 'cmake/**'
+      - 'scripts/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/iOS.yml'
+
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'data/**'
+      - 'packaging/**'
+      - 'cmake/**'
+      - 'scripts/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/iOS.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: principia-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUNDLE_ID: com.nyerahmt.principia.ios
+  MARKETING_VERSION: 0.0.1
+  IOS_DEPLOYMENT_TARGET: '15.0'
+
+jobs:
+  ios:
+    name: iOS Device
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout Principia
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.31.8'
+
+      - name: Prepare output directories
+        run: |
+          mkdir -p ios-logs
+          mkdir -p ios-output
+
+      - name: Show toolchain
+        run: |
+          set -o pipefail
+          {
+            sw_vers
+            echo
+            xcodebuild -version
+            echo
+            xcrun --sdk iphoneos --show-sdk-version
+            echo
+            xcrun --sdk iphoneos --show-sdk-path
+            echo
+            cmake --version
+          } 2>&1 | tee ios-logs/environment.log
+
+      - name: Install Ninja
+        run: |
+          set -euo pipefail
+          if ! command -v ninja >/dev/null 2>&1; then
+            brew install ninja
+          fi
+          ninja --version
+
+      - name: Determine dependency cache key
+        id: deps
+        run: |
+          set -euo pipefail
+          echo "sdk=$(xcrun --sdk iphoneos --show-sdk-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: principia-ios-${{ runner.os }}-${{ runner.arch }}-${{ steps.deps.outputs.sdk }}
+          max-size: 1G
+
+      - name: Restore iOS dependencies
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: build-ios-deps
+          key: principia-ios-device-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.deps.outputs.sdk }}-${{ hashFiles('scripts/build-ios-deps.sh') }}
+
+      - name: Build iOS dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -o pipefail
+          chmod +x scripts/build-ios-deps.sh
+          IOS_SDK=iphoneos IOS_ARCH=arm64 IOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
+            ./scripts/build-ios-deps.sh 2>&1 | tee ios-logs/dependencies.log
+
+      - name: Report dependency cache hit
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: echo "Using cached iOS device dependencies." | tee ios-logs/dependencies.log
+
+      - name: Configure Principia
+        run: |
+          set -o pipefail
+          cmake -S . -B build-ios -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_PREFIX_PATH="$PWD/build-ios-deps" \
+            -DFREETYPE_LIBRARY="$PWD/build-ios-deps/lib/libfreetype.a" \
+            -DFREETYPE_INCLUDE_DIRS="$PWD/build-ios-deps/include/freetype2" \
+            -DFREETYPE_INCLUDE_DIR_ft2build="$PWD/build-ios-deps/include/freetype2" \
+            -DFREETYPE_INCLUDE_DIR_freetype2="$PWD/build-ios-deps/include/freetype2" \
+            -DJPEG_LIBRARY="$PWD/build-ios-deps/lib/libjpeg.a" \
+            -DJPEG_INCLUDE_DIR="$PWD/build-ios-deps/include" \
+            -DPNG_LIBRARY="$PWD/build-ios-deps/lib/libpng16.a" \
+            -DPNG_PNG_INCLUDE_DIR="$PWD/build-ios-deps/include" \
+            -DZLIB_LIBRARY="$PWD/build-ios-deps/lib/libz.a" \
+            -DZLIB_INCLUDE_DIR="$PWD/build-ios-deps/include" \
+            -DCURL_LIBRARY="$PWD/build-ios-deps/lib/libcurl.a" \
+            -DCURL_INCLUDE_DIR="$PWD/build-ios-deps/include" \
+            -DUSE_VENDORED_SDL3=ON \
+            -DUNITY_BUILD=OFF \
+            2>&1 | tee ios-logs/configure.log
+
+      - name: Build Principia
+        run: |
+          set -o pipefail
+          cmake --build build-ios --parallel "$(sysctl -n hw.ncpu)" \
+            2>&1 | tee ios-logs/build.log
+          ccache -s | tee -a ios-logs/build.log
+
+      - name: Verify app bundle
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-ios/principia.app"
+          test -d "$APP"
+          test -f "$APP/principia"
+          test -f "$APP/Info.plist"
+          file "$APP/principia"
+
+      - name: Add Principia data
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-ios/principia.app"
+          rm -rf "$APP/data"
+          cp -R "$PWD/data" "$APP/data"
+
+      - name: Add app icons
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-ios/principia.app"
+          SRC="$PWD/packaging/principia.png"
+          test -f "$SRC"
+
+          make_icon() {
+            local size="$1"
+            local name="$2"
+            sips -z "$size" "$size" "$SRC" --out "$APP/${name}.png" >/dev/null
+          }
+
+          make_icon 40 AppIcon20x20@2x
+          make_icon 60 AppIcon20x20@3x
+          make_icon 58 AppIcon29x29@2x
+          make_icon 87 AppIcon29x29@3x
+          make_icon 80 AppIcon40x40@2x
+          make_icon 120 AppIcon40x40@3x
+          make_icon 120 AppIcon60x60@2x
+          make_icon 180 AppIcon60x60@3x
+
+          make_icon 20 AppIcon20x20
+          make_icon 40 AppIcon20x20@2x~ipad
+          make_icon 29 AppIcon29x29
+          make_icon 58 AppIcon29x29@2x~ipad
+          make_icon 40 AppIcon40x40
+          make_icon 80 AppIcon40x40@2x~ipad
+          make_icon 76 AppIcon76x76
+          make_icon 152 AppIcon76x76@2x
+          make_icon 167 AppIcon83.5x83.5@2x
+
+      - name: Configure iOS bundle
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-ios/principia.app"
+          PLIST="$APP/Info.plist"
+          plist_set() {
+            local key="$1" type="$2" value="$3"
+            if /usr/libexec/PlistBuddy -c "Print :${key}" "$PLIST" >/dev/null 2>&1; then
+              /usr/libexec/PlistBuddy -c "Set :${key} ${value}" "$PLIST"
+            else
+              /usr/libexec/PlistBuddy -c "Add :${key} ${type} ${value}" "$PLIST"
+            fi
+          }
+          plist_set CFBundleExecutable string principia
+          plist_set CFBundleIdentifier string "$BUNDLE_ID"
+          plist_set CFBundleName string Principia
+          plist_set CFBundleDisplayName string Principia
+          plist_set CFBundlePackageType string APPL
+          plist_set CFBundleVersion string "$GITHUB_RUN_NUMBER"
+          plist_set CFBundleShortVersionString string "$MARKETING_VERSION"
+          plist_set MinimumOSVersion string "$IOS_DEPLOYMENT_TARGET"
+          plist_set LSRequiresIPhoneOS bool true
+          plist_set UIRequiresFullScreen bool true
+          plist_set UIStatusBarHidden bool true
+          plist_set UIViewControllerBasedStatusBarAppearance bool false
+          plist_set UIFileSharingEnabled bool true
+          plist_set LSSupportsOpeningDocumentsInPlace bool true
+
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string $BUNDLE_ID" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string principia" "$PLIST"
+
+          /usr/libexec/PlistBuddy -c "Delete :UILaunchScreen" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UILaunchScreen dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :UIDeviceFamily" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:0 integer 1" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:1 integer 2" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleSupportedPlatforms" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :UISupportedInterfaceOrientations" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations:0 string UIInterfaceOrientationLandscapeLeft" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations:1 string UIInterfaceOrientationLandscapeRight" "$PLIST"
+
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleIcons" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0 string AppIcon20x20@2x" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:1 string AppIcon20x20@3x" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:2 string AppIcon29x29@2x" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:3 string AppIcon29x29@3x" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:4 string AppIcon40x40@2x" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:5 string AppIcon40x40@3x" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:6 string AppIcon60x60@2x" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:7 string AppIcon60x60@3x" "$PLIST"
+
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleIcons~ipad" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:0 string AppIcon20x20@2x~ipad" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:1 string AppIcon29x29@2x~ipad" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:2 string AppIcon40x40@2x~ipad" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:3 string AppIcon76x76" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:4 string AppIcon76x76@2x" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:5 string AppIcon83.5x83.5@2x" "$PLIST"
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package/Payload
+          ditto build-ios/principia.app package/Payload/Principia.app
+          (cd package && /usr/bin/zip -qry "$GITHUB_WORKSPACE/ios-output/Principia.ipa" Payload)
+          test -f ios-output/Principia.ipa
+
+      - name: Verify IPA
+        run: |
+          set -euo pipefail
+          rm -rf ipa-check
+          mkdir -p ipa-check
+          unzip -q ios-output/Principia.ipa -d ipa-check
+          APP="$PWD/ipa-check/Payload/Principia.app"
+          test -d "$APP" && test -f "$APP/principia" && test -f "$APP/Info.plist" && test -d "$APP/data"
+          test -f "$APP/AppIcon60x60@3x.png"
+          test -f "$APP/AppIcon76x76@2x.png"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = "$BUNDLE_ID"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$APP/Info.plist")" = "iPhoneOS"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$APP/Info.plist")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$APP/Info.plist")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$APP/Info.plist")" = "principia"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:7' "$APP/Info.plist")" = "AppIcon60x60@3x"
+
+      - name: Print useful build failures
+        if: failure()
+        run: |
+          if [ -f ios-logs/configure.log ]; then
+            grep -n -E 'error:|fatal error:|CMake Error|Could NOT find' ios-logs/configure.log || true
+          fi
+          if [ -f ios-logs/build.log ]; then
+            grep -n -E 'error:|fatal error:|FAILED:|Undefined symbols|undefined symbol|ld:|clang: error:' ios-logs/build.log || true
+          fi
+
+      - name: Upload Principia IPA
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: principia-ios
+          path: ios-output/Principia.ipa
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload iOS logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: principia-ios-logs
+          path: ios-logs/
+          if-no-files-found: warn
+          retention-days: 7

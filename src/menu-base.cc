@@ -14,13 +14,21 @@ extern struct tms_program *menu_bg_program;
 extern GLuint              menu_bg_color_loc;
 extern GLuint              menu_bg_scale_loc;
 
+#ifdef SDL_PLATFORM_IOS
+static void reclaim_ios_menu_top_space(widget_manager *wm)
+{
+    wm->areas[AREA_MENU_TOP_CENTER].base_y += menu_shared::bar_height;
+    wm->areas[AREA_MENU_LEFT_HCENTER].base_y += menu_shared::bar_height;
+    wm->areas[AREA_MENU_RIGHT_HCENTER].base_y += menu_shared::bar_height;
+}
+#endif
+
 bool menu_base::widget_clicked(principia_wdg *w, uint8_t button_id, int pid) {
     switch (button_id) {
         case BTN_VERSION:
             char msg[1024];
             snprintf(msg, 1023, "Principia %s commit %s",
                 principia_version_string(), principia_version_hash());
-
             ui::message(msg);
             break;
 
@@ -40,7 +48,7 @@ bool menu_base::widget_clicked(principia_wdg *w, uint8_t button_id, int pid) {
         case BTN_MESSAGE: {
             COMMUNITY_URL("version-redir");
             ui::open_url(url);
-	    } break;
+        } break;
 
         case BTN_BITHACK:
             ui::open_url("https://www.bithack.com/");
@@ -73,6 +81,9 @@ menu_base::menu_base(bool _include_logo) : include_logo(_include_logo) {
     this->get_surface()->atlas = gui_spritesheet::atlas;
 
     this->wm = new widget_manager(this, false, true);
+#ifdef SDL_PLATFORM_IOS
+    reclaim_ios_menu_top_space(this->wm);
+#endif
 
     this->wdg_username = this->wm->create_widget(
             this->get_surface(), TMS_WDG_LABEL,
@@ -135,6 +146,9 @@ void menu_base::window_size_changed() {
     }
 
     this->wm->init_areas();
+#ifdef SDL_PLATFORM_IOS
+    reclaim_ios_menu_top_space(this->wm);
+#endif
     this->wm->rearrange();
 
     this->refresh_widgets();
@@ -164,16 +178,19 @@ int menu_base::render() {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     menu_shared::tex_vignette->render();
 
+#ifndef SDL_PLATFORM_IOS
     if (this->include_logo) {
         int w = 0.75f * menu_shared::tex_principia->width*this->scale;
         int h = 0.75f * menu_shared::tex_principia->height*this->scale;
+        const int logo_top_offset = menu_shared::bar_height;
 
         glViewport(
                 _tms.opengl_width / 2 - w/2,
-                _tms.opengl_height - h - menu_shared::bar_height,
+                _tms.opengl_height - h - logo_top_offset,
                 w, h);
         menu_shared::tex_principia->render();
     }
+#endif
 
     glDisable(GL_BLEND);
 
@@ -188,11 +205,13 @@ int menu_base::render() {
         _tms.opengl_width,
         menu_shared::bar_height);
 
+#ifndef SDL_PLATFORM_IOS
     tms_ddraw_square(dd,
         (int)(_tms.opengl_width / 2),
         _tms.opengl_height - (int)(menu_shared::bar_height / 2),
         _tms.opengl_width,
         menu_shared::bar_height);
+#endif
 
     // yes we call step from within render! ultracool
     menu_shared::step();

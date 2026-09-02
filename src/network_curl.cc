@@ -569,6 +569,10 @@ int network::login(void *p) {
     CURLcode r;
     if ((r = curl_easy_perform(P.curl)) == CURLE_OK) {
         curl_easy_getinfo(P.curl, CURLINFO_RESPONSE_CODE, &http_code);
+#ifdef SDL_PLATFORM_IOS
+        if (http_code == 200 && hd.notify_message)
+            curl_easy_setopt(P.curl, CURLOPT_COOKIELIST, "FLUSH");
+#endif
         handle_login(hd, http_code);
     } else
         tms_errorf("curl_easy_perform failed: %s\n", curl_easy_strerror(r));
@@ -697,7 +701,6 @@ int network::download_pkg(void *_p) {
             _play_pkg_downloading_error = true;
         } else {
             curl_easy_getinfo(P.curl, CURLINFO_RESPONSE_CODE, &http_code);
-
             if (http_code == 404) {
                 _play_pkg_downloading_error = true;
             } else {

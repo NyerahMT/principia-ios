@@ -29,6 +29,7 @@ bool menu_base::widget_clicked(principia_wdg *w, uint8_t button_id, int pid) {
             char msg[1024];
             snprintf(msg, 1023, "Principia %s commit %s",
                 principia_version_string(), principia_version_hash());
+
             ui::message(msg);
             break;
 
@@ -48,7 +49,7 @@ bool menu_base::widget_clicked(principia_wdg *w, uint8_t button_id, int pid) {
         case BTN_MESSAGE: {
             COMMUNITY_URL("version-redir");
             ui::open_url(url);
-        } break;
+	    } break;
 
         case BTN_BITHACK:
             ui::open_url("https://www.bithack.com/");
@@ -182,11 +183,10 @@ int menu_base::render() {
     if (this->include_logo) {
         int w = 0.75f * menu_shared::tex_principia->width*this->scale;
         int h = 0.75f * menu_shared::tex_principia->height*this->scale;
-        const int logo_top_offset = menu_shared::bar_height;
 
         glViewport(
                 _tms.opengl_width / 2 - w/2,
-                _tms.opengl_height - h - logo_top_offset,
+                _tms.opengl_height - h - menu_shared::bar_height,
                 w, h);
         menu_shared::tex_principia->render();
     }

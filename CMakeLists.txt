@@ -75,9 +75,7 @@ if(LINUX)
 	option(USE_GLES "Use OpenGL ES on Linux (Experimental)" FALSE)
 endif()
 
-if(IOS)
-	set(SHOULD_USE_GLES TRUE)
-elseif(USE_GLES OR ANDROID OR EMSCRIPTEN OR NINTENDO_SWITCH)
+if(USE_GLES OR ANDROID OR EMSCRIPTEN OR NINTENDO_SWITCH OR IOS)
 	set(SHOULD_USE_GLES TRUE)
 else()
 	set(SHOULD_USE_GLES FALSE)
@@ -128,6 +126,10 @@ else()
 		lib/Box2D/Dynamics/Joints/*.cc
 		lib/Box2D/Particle/*.cc)
 	list(APPEND SRCS ${MAIN_SRCS})
+endif()
+
+if(IOS)
+	list(APPEND SRCS src/ios/ios_gpu_restore.cc)
 endif()
 
 if(BACKEND_IMGUI)
@@ -202,12 +204,10 @@ if(IOS)
 		"-framework OpenGLES"
 		"-framework Security"
 		"-framework CoreFoundation")
+elseif(SHOULD_USE_GLES)
+	list(APPEND LIBS GLESv2)
 else()
-	if(SHOULD_USE_GLES)
-		list(APPEND LIBS GLESv2)
-	else()
-		list(APPEND LIBS OpenGL::GL)
-	endif()
+	list(APPEND LIBS OpenGL::GL)
 endif()
 
 if(ANDROID)

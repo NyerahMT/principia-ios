@@ -179,3 +179,4 @@ tms_varray_upload_all(struct tms_varray *va)
     for (int x=0; x<va->num_gbufs; x++)
         tms_gbuffer_upload(va->gbufs[x].gbuf);
 }
+

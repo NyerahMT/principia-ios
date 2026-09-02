@@ -502,6 +502,18 @@ tms_texture_bind(struct tms_texture *tex)
     }
 #endif
 
+#ifdef SDL_PLATFORM_IOS
+    if (!tex->is_uploaded && !tex->is_buffered && !tex->buffer_fn &&
+        tex->filename && strcmp(tex->filename, "mem") != 0) {
+        char *filename = strdup(tex->filename);
+
+        if (tms_texture_load(tex, filename) == T_OK)
+            tms_texture_upload(tex);
+
+        free(filename);
+    }
+#endif
+
     if (!tex->is_uploaded && !tex->is_buffered) {
         /* lazy load */
         if (tex->buffer_fn){
@@ -512,25 +524,7 @@ tms_texture_bind(struct tms_texture *tex)
 #ifdef DEBUG_TEXTURES
             tms_debugf("lazy-loading(%p): filename %s", tex, tex->filename?tex->filename:"???");
 #endif
-        } else {
-#ifdef SDL_PLATFORM_IOS
-            if (tex->filename &&
-                strcmp(tex->filename, "mem") != 0) {
-
-                char *filename = strdup(tex->filename);
-
-                if (tms_texture_load(tex, filename) == T_OK) {
-                    tms_texture_upload(tex);
-                }
-
-                free(filename);
-            } else {
-                return 1;
-            }
-#else
-            return 1;
-#endif
-        }
+        } else return 1;
 
         if (!tex->is_uploaded) {
             tms_errorf("texture lazy-load did not upload anything! :(");
@@ -550,3 +544,4 @@ tms_texture_bind(struct tms_texture *tex)
     glBindTexture(GL_TEXTURE_2D, tex->gl_texture);
     return T_OK;
 }
+

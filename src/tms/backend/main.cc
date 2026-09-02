@@ -644,6 +644,7 @@ static int finger_to_pointer(uint64_t finger, bool create) {
 #elif defined(SDL_PLATFORM_WINDOWS)
     // Windows gives each finger tap session an unique incrementing ID that starts on each boot, so
     // we need to keep track of them and allocate in slots that fit TMS' pointer ID system.
+
     for (int x = 0; x < MAX_P; x++) {
         // If create=true, find first empty slot
         // else, find the slot that matches the finger ID returned from Windows

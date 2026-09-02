@@ -701,6 +701,7 @@ int network::download_pkg(void *_p) {
             _play_pkg_downloading_error = true;
         } else {
             curl_easy_getinfo(P.curl, CURLINFO_RESPONSE_CODE, &http_code);
+
             if (http_code == 404) {
                 _play_pkg_downloading_error = true;
             } else {

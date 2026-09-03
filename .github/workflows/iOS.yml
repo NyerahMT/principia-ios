@@ -68,15 +68,34 @@ jobs:
           echo "PRINCIPIA_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           echo "PRINCIPIA_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
 
-      - name: Determine iOS SDK version
+      - name: Determine iOS toolchain
         id: sdk
         run: |
           set -euo pipefail
-          xcodebuild -version
+          XCODE_VERSION="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          XCODE_BUILD="$(xcodebuild -version | awk '/Build version/ { print $3 }')"
           SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
-          echo "Using iOS SDK $SDK_VERSION"
-          test "$SDK_VERSION" = "26.6"
+          SDK_BUILD="$(xcrun --sdk iphoneos --show-sdk-build-version)"
+          DTXCODE="$(printf '%s' "$XCODE_VERSION" | awk -F. '{ printf "%d%d0", $1, $2 }')"
+          BUILD_MACHINE_OS="$(sw_vers -buildVersion)"
+
+          echo "Xcode $XCODE_VERSION ($XCODE_BUILD)"
+          echo "iPhoneOS SDK $SDK_VERSION ($SDK_BUILD)"
+          echo "Build machine OS $BUILD_MACHINE_OS"
+
+          test "$XCODE_VERSION" = "26.6"
+          case "$SDK_VERSION" in
+            26.*) ;;
+            *) echo "Expected an iOS 26.x SDK, got $SDK_VERSION" >&2; exit 1 ;;
+          esac
+
           echo "version=$SDK_VERSION" >> "$GITHUB_OUTPUT"
+          echo "XCODE_VERSION=$XCODE_VERSION" >> "$GITHUB_ENV"
+          echo "XCODE_BUILD=$XCODE_BUILD" >> "$GITHUB_ENV"
+          echo "DTXCODE=$DTXCODE" >> "$GITHUB_ENV"
+          echo "IOS_SDK_VERSION=$SDK_VERSION" >> "$GITHUB_ENV"
+          echo "IOS_SDK_BUILD=$SDK_BUILD" >> "$GITHUB_ENV"
+          echo "BUILD_MACHINE_OS=$BUILD_MACHINE_OS" >> "$GITHUB_ENV"
 
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -201,7 +220,20 @@ jobs:
           plist_set CFBundleVersion string "$PRINCIPIA_VERSION_CODE"
           plist_set CFBundleShortVersionString string "$PRINCIPIA_VERSION_NAME"
           plist_set MinimumOSVersion string "$IOS_DEPLOYMENT_TARGET"
+
+          # Xcode normally injects these during its packaging phase. Since this
+          # app bundle is assembled by CMake, stamp the same toolchain metadata
+          # from the actual selected Xcode/SDK so App Store Connect can verify it.
+          plist_set BuildMachineOSBuild string "$BUILD_MACHINE_OS"
+          plist_set DTCompiler string com.apple.compilers.llvm.clang.1_0
+          plist_set DTPlatformBuild string "$IOS_SDK_BUILD"
           plist_set DTPlatformName string iphoneos
+          plist_set DTPlatformVersion string "$IOS_SDK_VERSION"
+          plist_set DTSDKBuild string "$IOS_SDK_BUILD"
+          plist_set DTSDKName string "iphoneos$IOS_SDK_VERSION"
+          plist_set DTXcode string "$DTXCODE"
+          plist_set DTXcodeBuild string "$XCODE_BUILD"
+
           plist_set LSRequiresIPhoneOS bool true
           plist_set UIRequiresFullScreen bool true
           plist_set UIStatusBarHidden bool true
@@ -288,6 +320,12 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = "$PRINCIPIA_VERSION_NAME"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$PLIST")" = "iPhoneOS"
           test "$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformName' "$PLIST")" = "iphoneos"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformVersion' "$PLIST")" = "$IOS_SDK_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformBuild' "$PLIST")" = "$IOS_SDK_BUILD"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :DTSDKName' "$PLIST")" = "iphoneos$IOS_SDK_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :DTSDKBuild' "$PLIST")" = "$IOS_SDK_BUILD"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :DTXcode' "$PLIST")" = "$DTXCODE"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :DTXcodeBuild' "$PLIST")" = "$XCODE_BUILD"
           test "$(/usr/libexec/PlistBuddy -c 'Print :UIRequiredDeviceCapabilities:0' "$PLIST")" = "arm64"
           test "$(/usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$PLIST")" = "true"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$PLIST")" = "true"

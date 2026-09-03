@@ -1,0 +1,21 @@
+name: Trigger iOS Release
+
+on:
+  push:
+    paths:
+      - '.github/workflows/trigger-ios-release.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch iOS release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run iOS-release.yml --repo "$GITHUB_REPOSITORY" --ref master

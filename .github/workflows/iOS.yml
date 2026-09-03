@@ -31,7 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUNDLE_ID: se.principia-web.principia
+  BUNDLE_ID: com.nyerahmt.principia.ios
   IOS_DEPLOYMENT_TARGET: '15.0'
 
 jobs:

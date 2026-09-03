@@ -31,6 +31,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
+      - name: Checkout Principia
+        uses: actions/checkout@v6
+
       - name: Verify Xcode toolchain
         run: |
           set -euo pipefail
@@ -157,6 +160,91 @@ jobs:
             exit 1
           fi
 
+          # App Store builds made with current SDKs require app icons to come
+          # from a compiled asset catalog and CFBundleIconName to identify it.
+          SRC="$GITHUB_WORKSPACE/packaging/principia.png"
+          ASSET_CATALOG="$RUNNER_TEMP/PrincipiaAssets.xcassets"
+          APP_ICON_SET="$ASSET_CATALOG/AppIcon.appiconset"
+          PARTIAL_PLIST="$RUNNER_TEMP/appicon-partial.plist"
+          test -f "$SRC"
+          rm -rf "$ASSET_CATALOG" "$PARTIAL_PLIST"
+          mkdir -p "$APP_ICON_SET"
+
+          make_icon() {
+            local size="$1"
+            local name="$2"
+            sips -s format png -z "$size" "$size" "$SRC" --out "$APP_ICON_SET/$name" >/dev/null
+          }
+
+          make_icon 40   icon-20@2x.png
+          make_icon 60   icon-20@3x.png
+          make_icon 58   icon-29@2x.png
+          make_icon 87   icon-29@3x.png
+          make_icon 80   icon-40@2x.png
+          make_icon 120  icon-40@3x.png
+          make_icon 120  icon-60@2x.png
+          make_icon 180  icon-60@3x.png
+          make_icon 20   icon-20-ipad.png
+          make_icon 40   icon-20@2x-ipad.png
+          make_icon 29   icon-29-ipad.png
+          make_icon 58   icon-29@2x-ipad.png
+          make_icon 40   icon-40-ipad.png
+          make_icon 80   icon-40@2x-ipad.png
+          make_icon 76   icon-76-ipad.png
+          make_icon 152  icon-76@2x-ipad.png
+          make_icon 167  icon-83.5@2x-ipad.png
+          make_icon 1024 icon-marketing.png
+
+          cat > "$APP_ICON_SET/Contents.json" <<'JSON'
+          {
+            "images" : [
+              { "filename" : "icon-20@2x.png", "idiom" : "iphone", "scale" : "2x", "size" : "20x20" },
+              { "filename" : "icon-20@3x.png", "idiom" : "iphone", "scale" : "3x", "size" : "20x20" },
+              { "filename" : "icon-29@2x.png", "idiom" : "iphone", "scale" : "2x", "size" : "29x29" },
+              { "filename" : "icon-29@3x.png", "idiom" : "iphone", "scale" : "3x", "size" : "29x29" },
+              { "filename" : "icon-40@2x.png", "idiom" : "iphone", "scale" : "2x", "size" : "40x40" },
+              { "filename" : "icon-40@3x.png", "idiom" : "iphone", "scale" : "3x", "size" : "40x40" },
+              { "filename" : "icon-60@2x.png", "idiom" : "iphone", "scale" : "2x", "size" : "60x60" },
+              { "filename" : "icon-60@3x.png", "idiom" : "iphone", "scale" : "3x", "size" : "60x60" },
+              { "filename" : "icon-20-ipad.png", "idiom" : "ipad", "scale" : "1x", "size" : "20x20" },
+              { "filename" : "icon-20@2x-ipad.png", "idiom" : "ipad", "scale" : "2x", "size" : "20x20" },
+              { "filename" : "icon-29-ipad.png", "idiom" : "ipad", "scale" : "1x", "size" : "29x29" },
+              { "filename" : "icon-29@2x-ipad.png", "idiom" : "ipad", "scale" : "2x", "size" : "29x29" },
+              { "filename" : "icon-40-ipad.png", "idiom" : "ipad", "scale" : "1x", "size" : "40x40" },
+              { "filename" : "icon-40@2x-ipad.png", "idiom" : "ipad", "scale" : "2x", "size" : "40x40" },
+              { "filename" : "icon-76-ipad.png", "idiom" : "ipad", "scale" : "1x", "size" : "76x76" },
+              { "filename" : "icon-76@2x-ipad.png", "idiom" : "ipad", "scale" : "2x", "size" : "76x76" },
+              { "filename" : "icon-83.5@2x-ipad.png", "idiom" : "ipad", "scale" : "2x", "size" : "83.5x83.5" },
+              { "filename" : "icon-marketing.png", "idiom" : "ios-marketing", "scale" : "1x", "size" : "1024x1024" }
+            ],
+            "info" : { "author" : "xcode", "version" : 1 }
+          }
+          JSON
+
+          xcrun actool "$ASSET_CATALOG" \
+            --compile "$APP" \
+            --platform iphoneos \
+            --minimum-deployment-target 15.0 \
+            --app-icon AppIcon \
+            --target-device iphone \
+            --target-device ipad \
+            --output-partial-info-plist "$PARTIAL_PLIST"
+
+          test -f "$APP/Assets.car"
+          test -f "$PARTIAL_PLIST"
+
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleIcons' "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleIcons~ipad' "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleIconName' "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Merge $PARTIAL_PLIST" "$PLIST"
+          if /usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$PLIST" >/dev/null 2>&1; then
+            /usr/libexec/PlistBuddy -c 'Set :CFBundleIconName AppIcon' "$PLIST"
+          else
+            /usr/libexec/PlistBuddy -c 'Add :CFBundleIconName string AppIcon' "$PLIST"
+          fi
+          plutil -lint "$PLIST"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$PLIST")" = "AppIcon"
+
           cp "$PROFILE_PATH" "$APP/embedded.mobileprovision"
 
           if [ -d "$APP/Frameworks" ]; then
@@ -234,4 +322,5 @@ jobs:
             "$RUNNER_TEMP/appstore.mobileprovision" \
             "$RUNNER_TEMP/appstore-profile.plist" \
             "$RUNNER_TEMP/appstore-entitlements.plist" \
+            "$RUNNER_TEMP/appicon-partial.plist" \
             "${APP_STORE_CONNECT_KEY_PATH:-}"

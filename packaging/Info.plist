@@ -10,5 +10,7 @@
 	<string>principia.icns</string>
 	<key>CFBundleIdentifier</key>
 	<string>se.principia-web.principia</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Principia may use Bluetooth to communicate with compatible controllers and accessories.</string>
 </dict>
 </plist>

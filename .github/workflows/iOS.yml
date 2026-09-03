@@ -37,7 +37,7 @@ env:
 jobs:
   ios:
     name: iOS Device
-    runs-on: macos-15
+    runs-on: macos-26
 
     steps:
       - name: Checkout Principia
@@ -194,6 +194,7 @@ jobs:
           plist_set CFBundleVersion string "$PRINCIPIA_VERSION_CODE"
           plist_set CFBundleShortVersionString string "$PRINCIPIA_VERSION_NAME"
           plist_set MinimumOSVersion string "$IOS_DEPLOYMENT_TARGET"
+          plist_set DTPlatformName string iphoneos
           plist_set LSRequiresIPhoneOS bool true
           plist_set UIRequiresFullScreen bool true
           plist_set UIStatusBarHidden bool true
@@ -217,6 +218,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Delete :CFBundleSupportedPlatforms" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms array" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :UIRequiredDeviceCapabilities" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIRequiredDeviceCapabilities array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIRequiredDeviceCapabilities:0 string arm64" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :UISupportedInterfaceOrientations" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations array" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations:0 string UIInterfaceOrientationLandscapeLeft" "$PLIST"
@@ -276,6 +280,8 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" = "$PRINCIPIA_VERSION_CODE"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = "$PRINCIPIA_VERSION_NAME"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$PLIST")" = "iPhoneOS"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformName' "$PLIST")" = "iphoneos"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIRequiredDeviceCapabilities:0' "$PLIST")" = "arm64"
           test "$(/usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$PLIST")" = "true"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$PLIST")" = "true"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$PLIST")" = "principia"

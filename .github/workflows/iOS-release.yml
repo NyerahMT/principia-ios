@@ -13,7 +13,7 @@ permissions:
   actions: read
 
 env:
-  BUNDLE_ID: se.principia-web.principia
+  BUNDLE_ID: com.nyerahmt.principia.ios 
 
 jobs:
   release:

@@ -170,10 +170,17 @@ jobs:
           rm -rf "$ASSET_CATALOG" "$PARTIAL_PLIST"
           mkdir -p "$APP_ICON_SET"
 
+          # The upstream icon PNG carries an alpha channel. App Store icons
+          # must be fully opaque, so round-trip through JPEG before producing
+          # the PNG sizes used by the asset catalog.
+          OPAQUE_SRC="$RUNNER_TEMP/principia-app-icon.jpg"
+          sips -s format jpeg -s formatOptions best "$SRC" --out "$OPAQUE_SRC" >/dev/null
+          test -f "$OPAQUE_SRC"
+
           make_icon() {
             local size="$1"
             local name="$2"
-            sips -s format png -z "$size" "$size" "$SRC" --out "$APP_ICON_SET/$name" >/dev/null
+            sips -s format png -z "$size" "$size" "$OPAQUE_SRC" --out "$APP_ICON_SET/$name" >/dev/null
           }
 
           make_icon 40   icon-20@2x.png
@@ -323,4 +330,5 @@ jobs:
             "$RUNNER_TEMP/appstore-profile.plist" \
             "$RUNNER_TEMP/appstore-entitlements.plist" \
             "$RUNNER_TEMP/appicon-partial.plist" \
+            "$RUNNER_TEMP/principia-app-icon.jpg" \
             "${APP_STORE_CONNECT_KEY_PATH:-}"

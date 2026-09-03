@@ -1,0 +1,223 @@
+name: iOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Optional successful iOS workflow run ID (blank = latest successful master run)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BUNDLE_ID: se.principia-web.principia
+
+jobs:
+  release:
+    name: Sign and upload iOS build
+    runs-on: macos-15
+
+    env:
+      APPLE_DISTRIBUTION_P12_BASE64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+      APPLE_DISTRIBUTION_P12_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
+      APPLE_APPSTORE_PROFILE_BASE64: ${{ secrets.APPLE_APPSTORE_PROFILE_BASE64 }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_P8_BASE64 }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check release secrets
+        run: |
+          set -euo pipefail
+          required=(
+            APPLE_DISTRIBUTION_P12_BASE64
+            APPLE_DISTRIBUTION_P12_PASSWORD
+            APPLE_APPSTORE_PROFILE_BASE64
+            APP_STORE_CONNECT_KEY_ID
+            APP_STORE_CONNECT_ISSUER_ID
+            APP_STORE_CONNECT_P8_BASE64
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Download unsigned Principia IPA
+        run: |
+          set -euo pipefail
+          RUN_ID='${{ inputs.source_run_id }}'
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow iOS.yml \
+              --branch master \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+          fi
+          test -n "$RUN_ID"
+          echo "Using iOS workflow run $RUN_ID"
+          rm -rf unsigned
+          mkdir -p unsigned
+          gh run download "$RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name principia-ios \
+            --dir unsigned
+          test -f unsigned/Principia.ipa
+
+      - name: Install distribution certificate
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/apple-distribution.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/principia-release.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+
+          printf '%s' "$APPLE_DISTRIBUTION_P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_DISTRIBUTION_P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -nE 's/.*"(Apple Distribution:[^"]+)".*/\1/p' | head -1)"
+          test -n "$IDENTITY"
+          echo "SIGNING_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Prepare App Store provisioning profile
+        run: |
+          set -euo pipefail
+          PROFILE_PATH="$RUNNER_TEMP/appstore.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/appstore-profile.plist"
+          ENTITLEMENTS="$RUNNER_TEMP/appstore-entitlements.plist"
+
+          printf '%s' "$APPLE_APPSTORE_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$PROFILE_PLIST" > "$ENTITLEMENTS"
+
+          PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")"
+          PROFILE_BUNDLE_ID="${PROFILE_APP_ID#*.}"
+          if [ "$PROFILE_BUNDLE_ID" != "$BUNDLE_ID" ]; then
+            echo "Provisioning profile is for $PROFILE_BUNDLE_ID, expected $BUNDLE_ID" >&2
+            exit 1
+          fi
+
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")"
+          echo "Using provisioning profile: $PROFILE_NAME"
+          echo "PROFILE_PATH=$PROFILE_PATH" >> "$GITHUB_ENV"
+          echo "SIGNING_ENTITLEMENTS=$ENTITLEMENTS" >> "$GITHUB_ENV"
+
+      - name: Sign Principia IPA
+        run: |
+          set -euo pipefail
+          rm -rf signed-root signed
+          mkdir -p signed-root signed
+          unzip -q unsigned/Principia.ipa -d signed-root
+
+          APP="$(find signed-root/Payload -maxdepth 1 -type d -name '*.app' | head -1)"
+          test -d "$APP"
+
+          PLIST="$APP/Info.plist"
+          ACTUAL_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")"
+          if [ "$ACTUAL_BUNDLE_ID" != "$BUNDLE_ID" ]; then
+            echo "IPA bundle ID is $ACTUAL_BUNDLE_ID, expected $BUNDLE_ID" >&2
+            exit 1
+          fi
+
+          cp "$PROFILE_PATH" "$APP/embedded.mobileprovision"
+
+          if [ -d "$APP/Frameworks" ]; then
+            while IFS= read -r -d '' item; do
+              codesign --force --sign "$SIGNING_IDENTITY" --generate-entitlement-der "$item"
+            done < <(find "$APP/Frameworks" \( -type d -name '*.framework' -o -type f -name '*.dylib' \) -print0)
+          fi
+
+          if [ -d "$APP/PlugIns" ]; then
+            while IFS= read -r -d '' item; do
+              codesign --force --sign "$SIGNING_IDENTITY" --generate-entitlement-der "$item"
+            done < <(find "$APP/PlugIns" -type d -name '*.appex' -print0)
+          fi
+
+          codesign \
+            --force \
+            --sign "$SIGNING_IDENTITY" \
+            --entitlements "$SIGNING_ENTITLEMENTS" \
+            --generate-entitlement-der \
+            "$APP"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          (cd signed-root && /usr/bin/zip -qry "$GITHUB_WORKSPACE/signed/Principia.ipa" Payload)
+          test -f signed/Principia.ipa
+
+      - name: Configure App Store Connect API key
+        run: |
+          set -euo pipefail
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          KEY_PATH="$KEY_DIR/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          mkdir -p "$KEY_DIR"
+          printf '%s' "$APP_STORE_CONNECT_P8_BASE64" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          test -s "$KEY_PATH"
+          echo "APP_STORE_CONNECT_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Validate with App Store Connect
+        run: |
+          set -euo pipefail
+          xcrun altool \
+            --validate-app \
+            --file signed/Principia.ipa \
+            --type ios \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+
+      - name: Upload to App Store Connect
+        run: |
+          set -euo pipefail
+          xcrun altool \
+            --upload-app \
+            --file signed/Principia.ipa \
+            --type ios \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+
+      - name: Upload signed IPA artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: principia-ios-signed
+          path: signed/Principia.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Clean signing material
+        if: always()
+        run: |
+          set +e
+          if [ -n "${SIGNING_KEYCHAIN:-}" ] && [ -f "$SIGNING_KEYCHAIN" ]; then
+            security delete-keychain "$SIGNING_KEYCHAIN"
+          fi
+          rm -f \
+            "$RUNNER_TEMP/apple-distribution.p12" \
+            "$RUNNER_TEMP/appstore.mobileprovision" \
+            "$RUNNER_TEMP/appstore-profile.plist" \
+            "$RUNNER_TEMP/appstore-entitlements.plist" \
+            "${APP_STORE_CONNECT_KEY_PATH:-}"

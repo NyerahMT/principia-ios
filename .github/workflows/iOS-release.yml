@@ -34,8 +34,15 @@ jobs:
       - name: Verify Xcode toolchain
         run: |
           set -euo pipefail
+          XCODE_VERSION="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
           xcodebuild -version
-          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "26.6"
+          echo "Using iPhoneOS SDK $SDK_VERSION"
+          test "$XCODE_VERSION" = "26.6"
+          case "$SDK_VERSION" in
+            26.*) ;;
+            *) echo "Expected an iOS 26.x SDK, got $SDK_VERSION" >&2; exit 1 ;;
+          esac
 
       - name: Check release secrets
         run: |

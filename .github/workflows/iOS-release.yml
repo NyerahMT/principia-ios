@@ -18,7 +18,7 @@ env:
 jobs:
   release:
     name: Sign and upload iOS build
-    runs-on: macos-15
+    runs-on: macos-26
 
     env:
       APPLE_DISTRIBUTION_P12_BASE64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}

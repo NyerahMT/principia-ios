@@ -13,7 +13,8 @@ permissions:
   actions: read
 
 env:
-  BUNDLE_ID: com.nyerahmt.principia.ios 
+  BUNDLE_ID: com.nyerahmt.principia.ios
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
   release:
@@ -30,6 +31,12 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
+      - name: Verify Xcode toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          test "$(xcrun --sdk iphoneos --show-sdk-version)" = "26.6"
+
       - name: Check release secrets
         run: |
           set -euo pipefail

@@ -18,4 +18,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          echo "Dispatching iOS release after icon alpha fix"
           gh workflow run iOS-release.yml --repo "$GITHUB_REPOSITORY" --ref master

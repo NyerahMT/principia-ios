@@ -50,9 +50,8 @@ namespace UiLogin {
             bool req_username_len = username.length() > 0;
             bool req_pass_len = password.length() > 0;
 
-            if (ImGui::BeginTable("layout", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV)) {
-                ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, UI(175.0f));
-                ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthStretch);
+            if (ImGui::BeginTable("layout", 1, ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableSetupColumn("Login", ImGuiTableColumnFlags_WidthFixed, UI(175.0f));
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -92,26 +91,7 @@ namespace UiLogin {
                     ImGui::TextColored(ImVec4(1., 0., 0., 1.), "Login failed");
 
                 ImGui::EndChild();
-                ImGui::TableSetColumnIndex(1);
-                ImGui::BeginChild("right_panel", UI(150, 110), false);
-
-                ImGui::BeginChild("register_text", UI(150, 60), false);
-                ImGui::TextWrapped("Don't have an account?\n\nRegister one and join the Principia community!");
-                ImGui::EndChild();
-
-                ImGui::Dummy(UI(0.0f, 5.0f));
-
-                float button_width = UI(100.0f);
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - button_width) * 0.5f);
-                // already scaled
-                if (ImGui::Button("Register", ImVec2(button_width, 0))) {
-                    COMMUNITY_URL("register");
-                    ui::open_url(url);
-                }
-
-                ImGui::EndChild();
                 ImGui::EndTable();
-
             }
 
             ImGui::EndPopup();

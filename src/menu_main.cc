@@ -73,7 +73,11 @@ menu_main::menu_main() : menu_base(true) {
             this->get_surface(), TMS_WDG_LABEL,
             BTN_BROWSE_COMMUNITY, AREA_MENU_SUB_LEVELS);
     this->wdg_browse_community->priority = 1000;
+#ifdef SDL_PLATFORM_IOS
+    this->wdg_browse_community->set_label("Browse community on the web", font::xmedium);
+#else
     this->wdg_browse_community->set_label("Browse more community levels", font::xmedium);
+#endif
     this->wdg_browse_community->render_background = true;
     this->wdg_browse_community->label->color.a = 0.f;
     this->wdg_browse_community->label->outline_color.a = 0.f;
@@ -221,6 +225,29 @@ void menu_main::refresh_widgets() {
     if (P.new_version_available) {
         this->wdg_update_available->add();
     }
+
+#ifdef SDL_PLATFORM_IOS
+    /* Keep user-generated community browsing out of the iOS app itself.
+     * The Community entry is a clear handoff to the website, while level
+     * links from the site can return through the registered principia:// URL
+     * handler. Login and publishing remain available to existing accounts. */
+    for (int x=0; x<MAX_FEATURED_LEVELS_FETCHED; ++x) {
+        this->wdg_featured_level[x]->remove();
+    }
+
+    this->wdg_browse_community->label->color.a = 1.f;
+    this->wdg_browse_community->label->outline_color.a = 1.f;
+    this->wdg_browse_community->add();
+    this->wm->areas[AREA_MENU_SUB_LEVELS].set_alpha(1.f);
+
+    if (menu_shared::fl_state == FL_INIT) {
+        menu_shared::fl_state = FL_DONE;
+    }
+
+    this->wm->rearrange();
+    this->wm->rearrange();
+    return;
+#endif
 
     if (menu_shared::fl_state == FL_INIT) {
         for (int x=0; x<MAX_FEATURED_LEVELS_FETCHED; ++x) {

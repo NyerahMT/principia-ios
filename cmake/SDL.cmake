@@ -50,3 +50,20 @@ if(NINTENDO_SWITCH)
 else()
 	add_subdirectory(lib/SDL EXCLUDE_FROM_ALL)
 endif()
+
+if(IOS)
+	# The SDL build references Bluetooth APIs even when Principia does not
+	# actively request Bluetooth access. App Store Connect requires the
+	# corresponding purpose string to be present in the packaged Info.plist.
+	function(principia_add_ios_bluetooth_usage_description)
+		add_custom_command(TARGET principia POST_BUILD
+			COMMAND /usr/libexec/PlistBuddy
+				-c "Add :NSBluetoothAlwaysUsageDescription string Principia may use Bluetooth to communicate with compatible controllers and accessories."
+				"$<TARGET_FILE_DIR:principia>/Info.plist"
+			VERBATIM)
+	endfunction()
+
+	# SDL.cmake is included before the Principia target is created, so defer the
+	# target-specific post-build command until the end of the top-level directory.
+	cmake_language(DEFER CALL principia_add_ios_bluetooth_usage_description)
+endif()
